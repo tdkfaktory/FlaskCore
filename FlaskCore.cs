@@ -96,6 +96,9 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
         GameController.PluginBridge.SaveMethod("FlaskCore.GetTickUs",      (Func<long>)(() => _lastTickUs));
         GameController.PluginBridge.SaveMethod("FlaskCore.GetRenderUs",    (Func<long>)(() => _lastRenderUs));
 
+        Settings.CalibrateLifeFlask.OnPressed += LogLifeCalibration;
+        Settings.CalibrateManaFlask.OnPressed += LogManaCalibration;
+
         LogMessage("[FlaskCore] initialised.");
         return true;
     }
@@ -136,20 +139,7 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
         float mana   = GetManaPercent();
         bool  inZone = IsInCombatZone();
 
-        // Bubbling triggers on instant portion; Normal/Seething on full heal
-        var lifeStyle = ParseStyle(Settings.LifeFlaskStyle.Value);
-        var manaStyle = ParseStyle(Settings.ManaFlaskStyle.Value);
-        float lifeTrigger = lifeStyle == FlaskStyle.Bubbling
-            ? 1f - Settings.LifeFlaskInstantHealPct.Value / 100f
-            : 1f - Settings.LifeFlaskHealPct.Value / 100f;
-        float manaTrigger = manaStyle == FlaskStyle.Bubbling
-            ? 1f - Settings.ManaFlaskInstantHealPct.Value / 100f
-            : 1f - Settings.ManaFlaskHealPct.Value / 100f;
-
-        bool lifeBuff = HasFlaskBuff(Settings.LifeFlaskBuffId.Value);
-        bool manaBuff = HasFlaskBuff(Settings.ManaFlaskBuffId.Value);
-
-        // Absolute HP values for display
+        // Absolute HP/mana for display + trigger thresholds
         var player = GameController?.Player;
         int maxHp = 0, curHp = 0, maxMana = 0, curMana = 0;
         if (player != null && player.TryGetComponent<Life>(out var lifeComp))
@@ -157,9 +147,26 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
             maxHp = lifeComp.MaxHP; curHp = lifeComp.CurHP;
             maxMana = lifeComp.MaxMana; curMana = lifeComp.CurMana;
         }
-        int lifeInstantHp = maxHp > 0 ? (int)(maxHp * Settings.LifeFlaskInstantHealPct.Value / 100f) : 0;
-        int lifeRegenHp   = maxHp > 0 ? (int)(maxHp * Math.Max(0, Settings.LifeFlaskHealPct.Value - Settings.LifeFlaskInstantHealPct.Value) / 100f) : 0;
-        int lifeTotalHp   = maxHp > 0 ? (int)(maxHp * Settings.LifeFlaskHealPct.Value / 100f) : 0;
+
+        var lifeStyle = ParseStyle(Settings.LifeFlaskStyle.Value);
+        var manaStyle = ParseStyle(Settings.ManaFlaskStyle.Value);
+
+        int lifeInstantHp = Settings.LifeFlaskHealHp.Value * Settings.LifeFlaskInstantSplitPct.Value / 100;
+        int lifeRegenHp   = Settings.LifeFlaskHealHp.Value - lifeInstantHp;
+
+        float lifeHealFrac = maxHp > 0 ? Settings.LifeFlaskHealHp.Value  / (float)maxHp : 0f;
+        float lifeInstFrac = lifeHealFrac * Settings.LifeFlaskInstantSplitPct.Value / 100f;
+        float manaHealFrac = maxMana > 0 ? Settings.ManaFlaskHealMana.Value / (float)maxMana : 0f;
+        float manaInstFrac = manaHealFrac * Settings.ManaFlaskInstantSplitPct.Value / 100f;
+
+        float lifeTrigger  = lifeStyle == FlaskStyle.Bubbling ? 1f - lifeInstFrac  : 1f - lifeHealFrac;
+        float manaTrigger  = manaStyle == FlaskStyle.Bubbling ? 1f - manaInstFrac  : 1f - manaHealFrac;
+
+        bool lifeBuff = HasFlaskBuff(Settings.LifeFlaskBuffId.Value);
+        bool manaBuff = HasFlaskBuff(Settings.ManaFlaskBuffId.Value);
+
+        int lifeTriggerHp  = maxHp   > 0 ? (int)(lifeTrigger  * maxHp)   : 0;
+        int manaTriggerMana = maxMana > 0 ? (int)(manaTrigger * maxMana) : 0;
 
         var pos   = new Vector2(12, 290);
         int lineH = 18;
@@ -174,14 +181,14 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
 
         string lifeHealInfo = lifeStyle == FlaskStyle.Bubbling
             ? $"inst=+{lifeInstantHp}HP regen=+{lifeRegenHp}HP"
-            : $"heal=+{lifeTotalHp}HP";
+            : $"heal=+{Settings.LifeFlaskHealHp.Value}HP";
         Graphics.DrawText(
-            $"  HP: {curHp}/{maxHp} [{hp:P1}]  [use<{lifeTrigger:P0}  {lifeHealInfo}]  " +
+            $"  HP: {curHp}/{maxHp} [{hp:P1}]  [use<{lifeTriggerHp}HP  {lifeHealInfo}]  " +
             $"life({Settings.LifeFlaskStyle.Value ?? "?"}): {_debugLifeStatus}  buff={lifeBuff}  slot={(_lifeFlaskSlot != null ? "ok" : "MISSING")}",
             pos + new Vector2(0, y++ * lineH), hpColor);
 
         Graphics.DrawText(
-            $"  Mana: {curMana}/{maxMana} [{mana:P1}]  [use<{manaTrigger:P0}  heal={Settings.ManaFlaskHealPct.Value}%]  " +
+            $"  Mana: {curMana}/{maxMana} [{mana:P1}]  [use<{manaTriggerMana}mana  heal=+{Settings.ManaFlaskHealMana.Value}mana]  " +
             $"mana({Settings.ManaFlaskStyle.Value ?? "?"}): {_debugManaStatus}  buff={manaBuff}  slot={(_manaFlaskSlot != null ? "ok" : "MISSING")}",
             pos + new Vector2(0, y++ * lineH), manaColor);
 
@@ -204,44 +211,44 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
         float hp   = GetHpPercent();
         float mana = GetManaPercent();
 
+        var player = GameController?.Player;
+        Life lifeComp = null;
+        player?.TryGetComponent(out lifeComp);
+
+        int maxHp   = lifeComp?.MaxHP   > 0 ? lifeComp.MaxHP   : 1;
+        int maxMana = lifeComp?.MaxMana > 0 ? lifeComp.MaxMana : 1;
+
+        float lifeHealFrac = Settings.LifeFlaskHealHp.Value    / (float)maxHp;
+        float lifeInstFrac = lifeHealFrac * Settings.LifeFlaskInstantSplitPct.Value / 100f;
+        float manaHealFrac = Settings.ManaFlaskHealMana.Value   / (float)maxMana;
+        float manaInstFrac = manaHealFrac * Settings.ManaFlaskInstantSplitPct.Value / 100f;
+
         EvaluateFlask(FlaskType.Life, hp,
             ParseStyle(Settings.LifeFlaskStyle.Value),
-            Settings.LifeFlaskHealPct.Value,
-            Settings.LifeFlaskInstantHealPct.Value,
+            lifeHealFrac, lifeInstFrac,
             Settings.LifeFlaskBuffId.Value,
             Settings.LifeFlaskKey.Value,
             ref _lifeFlaskLastUsed, ref _debugLifeStatus);
 
         EvaluateFlask(FlaskType.Mana, mana,
             ParseStyle(Settings.ManaFlaskStyle.Value),
-            Settings.ManaFlaskHealPct.Value,
-            Settings.ManaFlaskInstantHealPct.Value,
+            manaHealFrac, manaInstFrac,
             Settings.ManaFlaskBuffId.Value,
             Settings.ManaFlaskKey.Value,
             ref _manaFlaskLastUsed, ref _debugManaStatus);
     }
 
-    /// <summary>
-    /// Trigger thresholds are derived from heal amounts — user only configures what the flask heals.
-    ///
-    /// healPct        — HP recovered per use. Trigger = HP &lt; (1 - healFrac).
-    /// instantHealPct — Bubbling: instant burst per use. Emergency re-press trigger = HP &lt; (1 - instFrac).
-    ///
-    /// This guarantees: press only when the full heal fits in missing HP → no wasted charges.
-    /// Seething chains naturally: re-press while missing >= healFrac (next use still fits).
-    /// </summary>
+    // healFrac and instFrac are pre-computed by TickAutoFlask from flat HP settings / MaxHP.
     private void EvaluateFlask(
         FlaskType type, float current,
         FlaskStyle style,
-        int healPct, int instantHealPct,
+        float healFrac, float instFrac,
         string buffId, HotkeyNodeV2.HotkeyNodeValue key,
         ref DateTime lastUsed, ref string status)
     {
         var slot = type == FlaskType.Life ? _lifeFlaskSlot : _manaFlaskSlot;
         if (slot == null) { status = "no slot"; return; }
 
-        float healFrac    = healPct        / 100f;
-        float instFrac    = instantHealPct / 100f;
         float missing     = 1f - current;
         bool  buffActive  = HasFlaskBuff(buffId);
         int   cdMs        = style == FlaskStyle.Seething
@@ -403,6 +410,35 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
                 return true;
         }
         return false;
+    }
+
+    private void LogLifeCalibration()
+    {
+        var life = GameController?.Player?.GetComponent<Life>();
+        if (life == null) { LogMessage("[FlaskCore] Calibrate: no Life component"); return; }
+        float healFrac = Settings.LifeFlaskHealHp.Value / (float)life.MaxHP;
+        float instFrac = healFrac * Settings.LifeFlaskInstantSplitPct.Value / 100f;
+        int   triggerHp = life.MaxHP - (int)(Settings.LifeFlaskHealHp.Value * Settings.LifeFlaskInstantSplitPct.Value / 100f);
+        int   instantHp = Settings.LifeFlaskHealHp.Value * Settings.LifeFlaskInstantSplitPct.Value / 100;
+        int   regenHp   = Settings.LifeFlaskHealHp.Value - instantHp;
+        LogMessage($"[FlaskCore] Life calibration: MaxHP={life.MaxHP}  HealHP={Settings.LifeFlaskHealHp.Value}" +
+                   $"  healFrac={healFrac:P1}  instFrac={instFrac:P1}" +
+                   $"  triggerHP={triggerHp}  instant=+{instantHp}HP regen=+{regenHp}HP");
+    }
+
+    private void LogManaCalibration()
+    {
+        var life = GameController?.Player?.GetComponent<Life>();
+        if (life == null) { LogMessage("[FlaskCore] Calibrate: no Life component"); return; }
+        int maxMana = life.MaxMana > 0 ? life.MaxMana : 1;
+        float healFrac = Settings.ManaFlaskHealMana.Value / (float)maxMana;
+        float instFrac = healFrac * Settings.ManaFlaskInstantSplitPct.Value / 100f;
+        int   triggerMana = maxMana - (int)(Settings.ManaFlaskHealMana.Value * Settings.ManaFlaskInstantSplitPct.Value / 100f);
+        int   instantMana = Settings.ManaFlaskHealMana.Value * Settings.ManaFlaskInstantSplitPct.Value / 100;
+        int   regenMana   = Settings.ManaFlaskHealMana.Value - instantMana;
+        LogMessage($"[FlaskCore] Mana calibration: MaxMana={maxMana}  HealMana={Settings.ManaFlaskHealMana.Value}" +
+                   $"  healFrac={healFrac:P1}  instFrac={instFrac:P1}" +
+                   $"  triggerMana={triggerMana}  instant=+{instantMana}mana regen=+{regenMana}mana");
     }
 
     private bool LifeFlaskReady()

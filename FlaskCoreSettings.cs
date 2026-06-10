@@ -3,28 +3,23 @@ using System.Windows.Forms;
 using ExileCore2.Shared.Attributes;
 using ExileCore2.Shared.Interfaces;
 using ExileCore2.Shared.Nodes;
+using System.Text.Json.Serialization;
 
 namespace FlaskCore;
 
 /// <summary>
-/// The user configures only how much each flask heals. Trigger thresholds are derived automatically
-/// to guarantee maximum HP recovery without wasting charges.
+/// User configures how much each flask heals (flat HP/mana values from tooltip).
+/// Plugin reads MaxHP/MaxMana from the player each Tick and derives trigger thresholds automatically.
 ///
 /// NORMAL (regen over ~3s, has buff):
-///   Trigger = HP < (100 - HealPct). Heal fits exactly in the missing HP.
-///   Guard: don't press while buff active (regen already running).
-///   Example: HealPct=46 → press when HP < 54%.
+///   healFrac = HealHp / MaxHP. Trigger = missing >= healFrac AND no buff.
 ///
 /// BUBBLING (~28% instant + ~72% regen, has buff):
-///   Main trigger = HP < (100 - HealPct).  [same as Normal — full heal fits]
-///   Emergency re-press = HP < (100 - InstantHealPct) even with buff active.
-///   Example: HealPct=46, InstantHealPct=13 → main at HP<54%, re-press at HP<87%.
+///   instFrac = healFrac * InstantSplitPct / 100. Trigger = missing >= instFrac (regardless of buff).
+///   Buff state is irrelevant — instant portion is always available.
 ///
-/// SEETHING (100% instant, no buff, ~50% recovery per use):
-///   Trigger = HP < (100 - HealPct).  [one use fits without overflow]
-///   Re-press after cooldown while HP still missing >= HealPct.
-///   Naturally chains: at 30% HP with HealPct=23 → presses 3×.
-///   Example: HealPct=23 → press at HP<77%; re-press if still missing>=23%.
+/// SEETHING (100% instant, no buff):
+///   healFrac = HealHp / MaxHP. Re-presses while missing >= healFrac.
 /// </summary>
 public enum FlaskStyle { Normal, Bubbling, Seething }
 
@@ -44,18 +39,19 @@ public class FlaskCoreSettings : ISettings
     [Menu("Life Flask Style", "Normal=regen / Bubbling=partial instant+regen / Seething=full instant.")]
     public ListNode LifeFlaskStyle { get; set; } = new() { Values = new List<string> { "Normal", "Bubbling", "Seething" }, Value = "Normal" };
 
-    [Menu("Life Flask Heal % per use",
-        "How much HP one use recovers (% of MaxHP). " +
-        "Plugin auto-calculates when to press so no charges are wasted. " +
-        "Normal/Bubbling: full heal e.g. 46%. Seething: ~23% (half the total).")]
-    public RangeNode<int> LifeFlaskHealPct { get; set; } = new(46, 1, 99);
+    [Menu("Life Flask Heal HP",
+        "Total HP recovered per use (flat). Read from flask tooltip. Ex: 920. " +
+        "Plugin divides by MaxHP each Tick to derive the trigger threshold automatically.")]
+    public RangeNode<int> LifeFlaskHealHp { get; set; } = new(920, 1, 5000);
 
-    [Menu("Life Flask Instant Heal % per use",
-        "Bubbling only: the instant portion heals this % of MaxHP per press. " +
-        "This is ALSO the trigger threshold — flask presses whenever HP missing >= this value. " +
-        "Formula: flask_heal_hp * 0.28 / MaxHP. " +
-        "Ex: flask=920HP, MaxHP=1648 → 920*0.28/1648 = 15.6% → set 16.")]
-    public RangeNode<int> LifeFlaskInstantHealPct { get; set; } = new(16, 1, 50);
+    [Menu("Life Flask Instant Split %",
+        "Bubbling only: % of total heal applied instantly per press. Default 28 (standard Bubbling prefix). " +
+        "Ex: flask heals 920HP, split=28 → 258HP instant + 662HP regen. Adjust if prefix differs.")]
+    public RangeNode<int> LifeFlaskInstantSplitPct { get; set; } = new(28, 1, 100);
+
+    [JsonIgnore]
+    [Menu("Calibrate Life Flask", "Logs MaxHP, computed heal%, instant%, and trigger HP to the console.")]
+    public ButtonNode CalibrateLifeFlask { get; set; } = new();
 
     [Menu("Life Flask Buff ID", "Regen buff substring. Find via Verbose Logging. Unused for Seething.")]
     public TextNode LifeFlaskBuffId { get; set; } = new("flask_effect_life");
@@ -67,11 +63,16 @@ public class FlaskCoreSettings : ISettings
     [Menu("Mana Flask Style")]
     public ListNode ManaFlaskStyle { get; set; } = new() { Values = new List<string> { "Normal", "Bubbling", "Seething" }, Value = "Normal" };
 
-    [Menu("Mana Flask Heal % per use", "How much mana one use recovers (% of MaxMana).")]
-    public RangeNode<int> ManaFlaskHealPct { get; set; } = new(46, 1, 99);
+    [Menu("Mana Flask Heal Mana",
+        "Total mana recovered per use (flat). Read from flask tooltip. Ex: 500.")]
+    public RangeNode<int> ManaFlaskHealMana { get; set; } = new(500, 1, 5000);
 
-    [Menu("Mana Flask Instant Heal % per use", "Bubbling only: instant burst portion (% of MaxMana).")]
-    public RangeNode<int> ManaFlaskInstantHealPct { get; set; } = new(13, 1, 50);
+    [Menu("Mana Flask Instant Split %", "Bubbling only: instant portion %. Default 28.")]
+    public RangeNode<int> ManaFlaskInstantSplitPct { get; set; } = new(28, 1, 100);
+
+    [JsonIgnore]
+    [Menu("Calibrate Mana Flask", "Logs MaxMana, computed heal%, instant%, and trigger mana to the console.")]
+    public ButtonNode CalibrateManaFlask { get; set; } = new();
 
     [Menu("Mana Flask Buff ID", "Regen buff substring. Find via Verbose Logging. Unused for Seething.")]
     public TextNode ManaFlaskBuffId { get; set; } = new("flask_effect_mana");
