@@ -7,20 +7,6 @@ using System.Text.Json.Serialization;
 
 namespace FlaskCore;
 
-/// <summary>
-/// User configures how much each flask heals (flat HP/mana values from tooltip).
-/// Plugin reads MaxHP/MaxMana from the player each Tick and derives trigger thresholds automatically.
-///
-/// NORMAL (regen over ~3s, has buff):
-///   healFrac = HealHp / MaxHP. Trigger = missing >= healFrac AND no buff.
-///
-/// BUBBLING (~28% instant + ~72% regen, has buff):
-///   instFrac = healFrac * InstantSplitPct / 100. Trigger = missing >= instFrac (regardless of buff).
-///   Buff state is irrelevant — instant portion is always available.
-///
-/// SEETHING (100% instant, no buff):
-///   healFrac = HealHp / MaxHP. Re-presses while missing >= healFrac.
-/// </summary>
 public enum FlaskStyle { Normal, Bubbling, Seething }
 
 public class FlaskCoreSettings : ISettings
@@ -32,73 +18,92 @@ public class FlaskCoreSettings : ISettings
     [Menu("AutoFlask Enabled")]
     public ToggleNode AutoFlaskEnabled { get; set; } = new(true);
 
-    // Life flask
+    // --- Life Flask ---
+
     [Menu("Life Flask Key")]
     public HotkeyNodeV2 LifeFlaskKey { get; set; } = new(Keys.D1);
 
-    [Menu("Life Flask Style", "Normal=regen / Bubbling=partial instant+regen / Seething=full instant.")]
+    [Menu("Life Flask Style", "Normal=regen over time / Bubbling=28% instant+regen / Seething=100% instant")]
     public ListNode LifeFlaskStyle { get; set; } = new() { Values = new List<string> { "Normal", "Bubbling", "Seething" }, Value = "Normal" };
 
-    [Menu("Life Flask Heal HP",
-        "Total HP recovered per use (flat). Read from flask tooltip. Ex: 920. " +
-        "Plugin divides by MaxHP each Tick to derive the trigger threshold automatically.")]
+    [Menu("Use when HP below %",
+        "Normal only: press flask when HP drops below this %. Ex: 70 = use when below 70% HP.")]
+    public RangeNode<int> LifeTriggerPct { get; set; } = new(70, 10, 99);
+
+    [Menu("Life Flask Heals (HP)",
+        "Bubbling/Seething: total HP recovered per use. Read from flask tooltip. Ex: 920. " +
+        "Trigger is calculated automatically — press when missing HP >= instant heal amount.")]
     public RangeNode<int> LifeFlaskHealHp { get; set; } = new(920, 1, 5000);
 
-    [Menu("Life Flask Instant Split %",
-        "Bubbling only: % of total heal applied instantly per press. Default 28 (standard Bubbling prefix). " +
-        "Ex: flask heals 920HP, split=28 → 258HP instant + 662HP regen. Adjust if prefix differs.")]
-    public RangeNode<int> LifeFlaskInstantSplitPct { get; set; } = new(28, 1, 100);
-
     [JsonIgnore]
-    [Menu("Calibrate Life Flask", "Logs MaxHP, computed heal%, instant%, and trigger HP to the console.")]
+    [Menu("Calibrate Life Flask", "Logs MaxHP, trigger threshold, and heal breakdown to console.")]
     public ButtonNode CalibrateLifeFlask { get; set; } = new();
 
-    [Menu("Life Flask Buff ID", "Regen buff substring. Find via Verbose Logging. Unused for Seething.")]
-    public TextNode LifeFlaskBuffId { get; set; } = new("flask_effect_life");
+    // --- Mana Flask ---
 
-    // Mana flask
     [Menu("Mana Flask Key")]
     public HotkeyNodeV2 ManaFlaskKey { get; set; } = new(Keys.D2);
 
-    [Menu("Mana Flask Style")]
+    [Menu("Mana Flask Style", "Normal=regen over time / Bubbling=28% instant+regen / Seething=100% instant")]
     public ListNode ManaFlaskStyle { get; set; } = new() { Values = new List<string> { "Normal", "Bubbling", "Seething" }, Value = "Normal" };
 
-    [Menu("Mana Flask Heal Mana",
-        "Total mana recovered per use (flat). Read from flask tooltip. Ex: 500.")]
+    [Menu("Use when Mana below %",
+        "Normal only: press flask when mana drops below this %. Ex: 50 = use when below 50% mana.")]
+    public RangeNode<int> ManaTriggerPct { get; set; } = new(50, 10, 99);
+
+    [Menu("Mana Flask Heals (Mana)",
+        "Bubbling/Seething: total mana recovered per use. Read from flask tooltip. Ex: 500.")]
     public RangeNode<int> ManaFlaskHealMana { get; set; } = new(500, 1, 5000);
 
-    [Menu("Mana Flask Instant Split %", "Bubbling only: instant portion %. Default 28.")]
-    public RangeNode<int> ManaFlaskInstantSplitPct { get; set; } = new(28, 1, 100);
-
     [JsonIgnore]
-    [Menu("Calibrate Mana Flask", "Logs MaxMana, computed heal%, instant%, and trigger mana to the console.")]
+    [Menu("Calibrate Mana Flask", "Logs MaxMana, trigger threshold, and heal breakdown to console.")]
     public ButtonNode CalibrateManaFlask { get; set; } = new();
 
-    [Menu("Mana Flask Buff ID", "Regen buff substring. Find via Verbose Logging. Unused for Seething.")]
+    // ---- PanicMode ----
+
+    [Menu("PanicMode Enabled", "Press ESC when HP < threshold to exit to character select and avoid XP loss.")]
+    public ToggleNode PanicModeEnabled { get; set; } = new(true);
+
+    [Menu("Panic HP Threshold %", "ESC fires when HP drops below this value.")]
+    public RangeNode<int> PanicThreshold { get; set; } = new(10, 1, 50);
+
+    // ---- Debug ----
+
+    [Menu("Debug Overlay")]
+    public ToggleNode DebugOverlay { get; set; } = new(true);
+
+    // ---- Advanced (rarely changed) ----
+
+    [Menu("Advanced", "Settings that rarely need to change.")]
+    public AdvancedSettings Advanced { get; set; } = new();
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class AdvancedSettings
+{
+    [Menu("Life Flask Instant Split %",
+        "Bubbling: % of total heal applied instantly per press. Default 28 (standard prefix).")]
+    public RangeNode<int> LifeFlaskInstantSplitPct { get; set; } = new(28, 1, 100);
+
+    [Menu("Mana Flask Instant Split %", "Bubbling: instant portion %. Default 28.")]
+    public RangeNode<int> ManaFlaskInstantSplitPct { get; set; } = new(28, 1, 100);
+
+    [Menu("Life Flask Buff ID", "Regen buff substring for buff-guard. Find via Verbose Logging.")]
+    public TextNode LifeFlaskBuffId { get; set; } = new("flask_effect_life");
+
+    [Menu("Mana Flask Buff ID", "Regen buff substring for buff-guard. Find via Verbose Logging.")]
     public TextNode ManaFlaskBuffId { get; set; } = new("flask_effect_mana");
 
-    // Shared
-    [Menu("Normal/Bubbling Cooldown (ms)", "Min ms between presses. Guards window before buff registers.")]
+    [Menu("Flask Cooldown (ms)", "Min ms between presses for Normal/Bubbling.")]
     public RangeNode<int> FlaskCooldownMs { get; set; } = new(500, 100, 3000);
 
     [Menu("Seething Re-use Cooldown (ms)", "Min ms between Seething re-presses during burst.")]
     public RangeNode<int> SeethingCooldownMs { get; set; } = new(200, 100, 2000);
 
-    [Menu("Flask Inventory Index Override", "-1 = auto-detect.")]
-    public RangeNode<int> FlaskInventoryIndex { get; set; } = new(-1, -1, 30);
-
     [Menu("Skip if UI Open")]
     public ToggleNode SkipIfUiOpen { get; set; } = new(true);
 
-    // ---- PanicMode ----
-
-    [Menu("PanicMode Enabled", "ESC when HP < threshold → exit to char select, avoid XP loss.")]
-    public ToggleNode PanicModeEnabled { get; set; } = new(true);
-
-    [Menu("Panic HP Threshold %")]
-    public RangeNode<int> PanicThreshold { get; set; } = new(10, 1, 50);
-
-    [Menu("Panic Recovery Buffer %", "HP must recover above threshold+buffer before panic re-arms.")]
+    [Menu("Panic Recovery Buffer %", "HP must reach threshold+buffer before panic re-arms.")]
     public RangeNode<int> PanicRecoveryBuffer { get; set; } = new(15, 5, 40);
 
     [Menu("Panic ESC Press Count")]
@@ -107,10 +112,8 @@ public class FlaskCoreSettings : ISettings
     [Menu("Panic ESC Delay (ms)")]
     public RangeNode<int> PanicEscDelayMs { get; set; } = new(200, 50, 1000);
 
-    // ---- Debug ----
-
-    [Menu("Debug Overlay")]
-    public ToggleNode DebugOverlay { get; set; } = new(true);
+    [Menu("Flask Inventory Index Override", "-1 = auto-detect.")]
+    public RangeNode<int> FlaskInventoryIndex { get; set; } = new(-1, -1, 30);
 
     [Menu("Verbose Logging", "Log buff IDs on flask press — use to find correct buff ID strings.")]
     public ToggleNode VerboseLogging { get; set; } = new(false);

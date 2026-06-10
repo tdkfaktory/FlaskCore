@@ -151,22 +151,40 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
         var lifeStyle = ParseStyle(Settings.LifeFlaskStyle.Value);
         var manaStyle = ParseStyle(Settings.ManaFlaskStyle.Value);
 
-        int lifeInstantHp = Settings.LifeFlaskHealHp.Value * Settings.LifeFlaskInstantSplitPct.Value / 100;
+        // Life trigger display
+        float lifeHealFracR, lifeInstFracR;
+        if (lifeStyle == FlaskStyle.Normal)
+        {
+            lifeHealFracR = Settings.LifeTriggerPct.Value / 100f;
+            lifeInstFracR = lifeHealFracR;
+        }
+        else
+        {
+            lifeHealFracR = maxHp > 0 ? Settings.LifeFlaskHealHp.Value / (float)maxHp : 0f;
+            lifeInstFracR = lifeHealFracR * Settings.Advanced.LifeFlaskInstantSplitPct.Value / 100f;
+        }
+        int lifeInstantHp = Settings.LifeFlaskHealHp.Value * Settings.Advanced.LifeFlaskInstantSplitPct.Value / 100;
         int lifeRegenHp   = Settings.LifeFlaskHealHp.Value - lifeInstantHp;
+        float lifeTrigger = lifeStyle == FlaskStyle.Bubbling ? 1f - lifeInstFracR : 1f - lifeHealFracR;
+        int lifeTriggerHp = maxHp > 0 ? (int)(lifeTrigger * maxHp) : 0;
 
-        float lifeHealFrac = maxHp > 0 ? Settings.LifeFlaskHealHp.Value  / (float)maxHp : 0f;
-        float lifeInstFrac = lifeHealFrac * Settings.LifeFlaskInstantSplitPct.Value / 100f;
-        float manaHealFrac = maxMana > 0 ? Settings.ManaFlaskHealMana.Value / (float)maxMana : 0f;
-        float manaInstFrac = manaHealFrac * Settings.ManaFlaskInstantSplitPct.Value / 100f;
-
-        float lifeTrigger  = lifeStyle == FlaskStyle.Bubbling ? 1f - lifeInstFrac  : 1f - lifeHealFrac;
-        float manaTrigger  = manaStyle == FlaskStyle.Bubbling ? 1f - manaInstFrac  : 1f - manaHealFrac;
-
-        bool lifeBuff = HasFlaskBuff(Settings.LifeFlaskBuffId.Value);
-        bool manaBuff = HasFlaskBuff(Settings.ManaFlaskBuffId.Value);
-
-        int lifeTriggerHp  = maxHp   > 0 ? (int)(lifeTrigger  * maxHp)   : 0;
+        // Mana trigger display
+        float manaHealFracR, manaInstFracR;
+        if (manaStyle == FlaskStyle.Normal)
+        {
+            manaHealFracR = Settings.ManaTriggerPct.Value / 100f;
+            manaInstFracR = manaHealFracR;
+        }
+        else
+        {
+            manaHealFracR = maxMana > 0 ? Settings.ManaFlaskHealMana.Value / (float)maxMana : 0f;
+            manaInstFracR = manaHealFracR * Settings.Advanced.ManaFlaskInstantSplitPct.Value / 100f;
+        }
+        float manaTrigger   = manaStyle == FlaskStyle.Bubbling ? 1f - manaInstFracR : 1f - manaHealFracR;
         int manaTriggerMana = maxMana > 0 ? (int)(manaTrigger * maxMana) : 0;
+
+        bool lifeBuff = HasFlaskBuff(Settings.Advanced.LifeFlaskBuffId.Value);
+        bool manaBuff = HasFlaskBuff(Settings.Advanced.ManaFlaskBuffId.Value);
 
         var pos   = new Vector2(12, 290);
         int lineH = 18;
@@ -218,22 +236,45 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
         int maxHp   = lifeComp?.MaxHP   > 0 ? lifeComp.MaxHP   : 1;
         int maxMana = lifeComp?.MaxMana > 0 ? lifeComp.MaxMana : 1;
 
-        float lifeHealFrac = Settings.LifeFlaskHealHp.Value    / (float)maxHp;
-        float lifeInstFrac = lifeHealFrac * Settings.LifeFlaskInstantSplitPct.Value / 100f;
-        float manaHealFrac = Settings.ManaFlaskHealMana.Value   / (float)maxMana;
-        float manaInstFrac = manaHealFrac * Settings.ManaFlaskInstantSplitPct.Value / 100f;
+        var lifeStyle = ParseStyle(Settings.LifeFlaskStyle.Value);
+        var manaStyle = ParseStyle(Settings.ManaFlaskStyle.Value);
+
+        // Normal: user sets trigger % directly. Bubbling/Seething: derive from flat heal / MaxHP.
+        float lifeHealFrac, lifeInstFrac;
+        if (lifeStyle == FlaskStyle.Normal)
+        {
+            lifeHealFrac = Settings.LifeTriggerPct.Value / 100f;
+            lifeInstFrac = lifeHealFrac;
+        }
+        else
+        {
+            lifeHealFrac = Settings.LifeFlaskHealHp.Value / (float)maxHp;
+            lifeInstFrac = lifeHealFrac * Settings.Advanced.LifeFlaskInstantSplitPct.Value / 100f;
+        }
+
+        float manaHealFrac, manaInstFrac;
+        if (manaStyle == FlaskStyle.Normal)
+        {
+            manaHealFrac = Settings.ManaTriggerPct.Value / 100f;
+            manaInstFrac = manaHealFrac;
+        }
+        else
+        {
+            manaHealFrac = Settings.ManaFlaskHealMana.Value / (float)maxMana;
+            manaInstFrac = manaHealFrac * Settings.Advanced.ManaFlaskInstantSplitPct.Value / 100f;
+        }
 
         EvaluateFlask(FlaskType.Life, hp,
-            ParseStyle(Settings.LifeFlaskStyle.Value),
+            lifeStyle,
             lifeHealFrac, lifeInstFrac,
-            Settings.LifeFlaskBuffId.Value,
+            Settings.Advanced.LifeFlaskBuffId.Value,
             Settings.LifeFlaskKey.Value,
             ref _lifeFlaskLastUsed, ref _debugLifeStatus);
 
         EvaluateFlask(FlaskType.Mana, mana,
-            ParseStyle(Settings.ManaFlaskStyle.Value),
+            manaStyle,
             manaHealFrac, manaInstFrac,
-            Settings.ManaFlaskBuffId.Value,
+            Settings.Advanced.ManaFlaskBuffId.Value,
             Settings.ManaFlaskKey.Value,
             ref _manaFlaskLastUsed, ref _debugManaStatus);
     }
@@ -252,8 +293,8 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
         float missing     = 1f - current;
         bool  buffActive  = HasFlaskBuff(buffId);
         int   cdMs        = style == FlaskStyle.Seething
-                            ? Settings.SeethingCooldownMs.Value
-                            : Settings.FlaskCooldownMs.Value;
+                            ? Settings.Advanced.SeethingCooldownMs.Value
+                            : Settings.Advanced.FlaskCooldownMs.Value;
         bool  cdElapsed   = (DateTime.UtcNow - lastUsed).TotalMilliseconds >= cdMs;
 
         // Normal/Seething: press when full heal fits (missing >= healFrac)
@@ -289,7 +330,7 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
             return;
         }
 
-        if (Settings.SkipIfUiOpen && IsAnyUiPanelOpen()) { status = "UI open"; return; }
+        if (Settings.Advanced.SkipIfUiOpen && IsAnyUiPanelOpen()) { status = "UI open"; return; }
 
         Input.KeyPressRelease(key.Key);
         lastUsed = DateTime.UtcNow;
@@ -301,7 +342,7 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
             _                    => "used"
         };
 
-        if (Settings.VerboseLogging)
+        if (Settings.Advanced.VerboseLogging)
         {
             var player = GameController?.Player;
             if (player != null && player.TryGetComponent<Buffs>(out var buffs))
@@ -318,7 +359,7 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
     {
         float hp          = GetHpPercent();
         float panicPct    = Settings.PanicThreshold.Value / 100f;
-        float recoveryPct = panicPct + Settings.PanicRecoveryBuffer.Value / 100f;
+        float recoveryPct = panicPct + Settings.Advanced.PanicRecoveryBuffer.Value / 100f;
 
         if (!_panicTriggered)
         {
@@ -326,8 +367,8 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
             {
                 _panicTriggered = true;
                 LogMessage($"[FlaskCore] PANIC at hp={hp:P1}", 5f);
-                for (int i = 0; i < Settings.PanicEscPressCount.Value; i++)
-                    _panicEscQueue.Enqueue(DateTime.UtcNow.AddMilliseconds(i * Settings.PanicEscDelayMs.Value));
+                for (int i = 0; i < Settings.Advanced.PanicEscPressCount.Value; i++)
+                    _panicEscQueue.Enqueue(DateTime.UtcNow.AddMilliseconds(i * Settings.Advanced.PanicEscDelayMs.Value));
             }
         }
         else
@@ -363,7 +404,7 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
 
         IEnumerable<ServerInventory.InventSlotItem> candidates = null;
 
-        int idxOverride = Settings.FlaskInventoryIndex.Value;
+        int idxOverride = Settings.Advanced.FlaskInventoryIndex.Value;
         if (idxOverride >= 0 && idxOverride < inventories.Count)
             candidates = inventories[idxOverride]?.Inventory?.InventorySlotItems;
 
@@ -416,12 +457,18 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
     {
         var life = GameController?.Player?.GetComponent<Life>();
         if (life == null) { LogMessage("[FlaskCore] Calibrate: no Life component"); return; }
+        var style = ParseStyle(Settings.LifeFlaskStyle.Value);
+        if (style == FlaskStyle.Normal)
+        {
+            LogMessage($"[FlaskCore] Life (Normal): MaxHP={life.MaxHP}  trigger=below {Settings.LifeTriggerPct.Value}% ({(int)(life.MaxHP * Settings.LifeTriggerPct.Value / 100f)}HP)");
+            return;
+        }
         float healFrac = Settings.LifeFlaskHealHp.Value / (float)life.MaxHP;
-        float instFrac = healFrac * Settings.LifeFlaskInstantSplitPct.Value / 100f;
-        int   triggerHp = life.MaxHP - (int)(Settings.LifeFlaskHealHp.Value * Settings.LifeFlaskInstantSplitPct.Value / 100f);
-        int   instantHp = Settings.LifeFlaskHealHp.Value * Settings.LifeFlaskInstantSplitPct.Value / 100;
+        float instFrac = healFrac * Settings.Advanced.LifeFlaskInstantSplitPct.Value / 100f;
+        int   instantHp = Settings.LifeFlaskHealHp.Value * Settings.Advanced.LifeFlaskInstantSplitPct.Value / 100;
         int   regenHp   = Settings.LifeFlaskHealHp.Value - instantHp;
-        LogMessage($"[FlaskCore] Life calibration: MaxHP={life.MaxHP}  HealHP={Settings.LifeFlaskHealHp.Value}" +
+        int   triggerHp = life.MaxHP - instantHp;
+        LogMessage($"[FlaskCore] Life ({style}): MaxHP={life.MaxHP}  HealHP={Settings.LifeFlaskHealHp.Value}" +
                    $"  healFrac={healFrac:P1}  instFrac={instFrac:P1}" +
                    $"  triggerHP={triggerHp}  instant=+{instantHp}HP regen=+{regenHp}HP");
     }
@@ -431,12 +478,18 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
         var life = GameController?.Player?.GetComponent<Life>();
         if (life == null) { LogMessage("[FlaskCore] Calibrate: no Life component"); return; }
         int maxMana = life.MaxMana > 0 ? life.MaxMana : 1;
-        float healFrac = Settings.ManaFlaskHealMana.Value / (float)maxMana;
-        float instFrac = healFrac * Settings.ManaFlaskInstantSplitPct.Value / 100f;
-        int   triggerMana = maxMana - (int)(Settings.ManaFlaskHealMana.Value * Settings.ManaFlaskInstantSplitPct.Value / 100f);
-        int   instantMana = Settings.ManaFlaskHealMana.Value * Settings.ManaFlaskInstantSplitPct.Value / 100;
+        var style = ParseStyle(Settings.ManaFlaskStyle.Value);
+        if (style == FlaskStyle.Normal)
+        {
+            LogMessage($"[FlaskCore] Mana (Normal): MaxMana={maxMana}  trigger=below {Settings.ManaTriggerPct.Value}% ({(int)(maxMana * Settings.ManaTriggerPct.Value / 100f)}mana)");
+            return;
+        }
+        float healFrac    = Settings.ManaFlaskHealMana.Value / (float)maxMana;
+        float instFrac    = healFrac * Settings.Advanced.ManaFlaskInstantSplitPct.Value / 100f;
+        int   instantMana = Settings.ManaFlaskHealMana.Value * Settings.Advanced.ManaFlaskInstantSplitPct.Value / 100;
         int   regenMana   = Settings.ManaFlaskHealMana.Value - instantMana;
-        LogMessage($"[FlaskCore] Mana calibration: MaxMana={maxMana}  HealMana={Settings.ManaFlaskHealMana.Value}" +
+        int   triggerMana = maxMana - instantMana;
+        LogMessage($"[FlaskCore] Mana ({style}): MaxMana={maxMana}  HealMana={Settings.ManaFlaskHealMana.Value}" +
                    $"  healFrac={healFrac:P1}  instFrac={instFrac:P1}" +
                    $"  triggerMana={triggerMana}  instant=+{instantMana}mana regen=+{regenMana}mana");
     }
@@ -445,14 +498,14 @@ public class FlaskCore : BaseSettingsPlugin<FlaskCoreSettings>
     {
         if (_lifeFlaskSlot == null) return false;
         if (ParseStyle(Settings.LifeFlaskStyle.Value) == FlaskStyle.Seething) return true;
-        return !HasFlaskBuff(Settings.LifeFlaskBuffId.Value);
+        return !HasFlaskBuff(Settings.Advanced.LifeFlaskBuffId.Value);
     }
 
     private bool ManaFlaskReady()
     {
         if (_manaFlaskSlot == null) return false;
         if (ParseStyle(Settings.ManaFlaskStyle.Value) == FlaskStyle.Seething) return true;
-        return !HasFlaskBuff(Settings.ManaFlaskBuffId.Value);
+        return !HasFlaskBuff(Settings.Advanced.ManaFlaskBuffId.Value);
     }
 
     private static FlaskStyle ParseStyle(string v) =>
