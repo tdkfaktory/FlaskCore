@@ -94,11 +94,18 @@ public class AdvancedSettings
     [Menu("Mana Flask Buff ID", "Regen buff substring for buff-guard. Find via Verbose Logging.")]
     public TextNode ManaFlaskBuffId { get; set; } = new("flask_effect_mana");
 
-    [Menu("Flask Cooldown (ms)", "Min ms between presses for Normal/Bubbling.")]
+    [Menu("Flask Cooldown (ms)", "Min ms between presses for Normal flasks.")]
     public RangeNode<int> FlaskCooldownMs { get; set; } = new(500, 100, 3000);
 
-    [Menu("Seething Re-use Cooldown (ms)", "Min ms between Seething re-presses during burst.")]
-    public RangeNode<int> SeethingCooldownMs { get; set; } = new(200, 100, 2000);
+    [Menu("Bubbling Cooldown (ms)",
+        "Min ms between Bubbling re-presses. Keep short (~300ms) so burst presses fire before the " +
+        "server applies the regen buff — allows 3× instant heal in rapid succession.")]
+    public RangeNode<int> BubblingCooldownMs { get; set; } = new(300, 50, 2000);
+
+    [Menu("Seething Re-use Cooldown (ms)",
+        "Min ms between Seething re-presses. Seething is 100% instant with no regen buff — " +
+        "keep very short so 2-3 charges fire immediately when HP is critically low.")]
+    public RangeNode<int> SeethingCooldownMs { get; set; } = new(150, 50, 1000);
 
     [Menu("Skip if UI Open")]
     public ToggleNode SkipIfUiOpen { get; set; } = new(true);
@@ -117,4 +124,7 @@ public class AdvancedSettings
 
     [Menu("Verbose Logging", "Log buff IDs on flask press — use to find correct buff ID strings.")]
     public ToggleNode VerboseLogging { get; set; } = new(false);
+
+    [Menu("File Logging", "Write press/skip/charges/HP diagnostics to flaskcore_debug.log for offline analysis.")]
+    public ToggleNode FileLogging { get; set; } = new(true);
 }
